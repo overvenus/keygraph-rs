@@ -1,0 +1,140 @@
+version: 2
+jobs:
+  refresh_cache:
+    environment:
+      RUST_VERSION: "1.26.0"
+    docker:
+      - image: rust:1.26.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-cargo-{{ .Environment.RUST_VERSION }}-{{ .Revision }}
+            - v1-cargo-{{ .Environment.RUST_VERSION }}
+            - v1-cargo
+      - run: cargo update
+      - run: cargo fetch
+      - save_cache:
+          key: v1-cargo-{{ .Environment.RUST_VERSION }}-{{ .Revision }}
+          paths:
+            - /usr/local/cargo/git
+            - /usr/local/cargo/registry
+
+  build:
+    environment:
+      RUST_VERSION: "1.26.0"
+    docker:
+      - image: rust:1.26.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-cargo-{{ .Environment.RUST_VERSION }}-{{ .Revision }}
+            - v1-cargo-{{ .Environment.RUST_VERSION }}
+            - v1-cargo
+      - run: cargo build
+      - save_cache:
+          key: v1-build-{{ .Environment.RUST_VERSION }}-{{ checksum "Cargo.lock" }}-{{ .Revision }}
+          paths:
+            - ~/project/target
+
+  test:
+    environment:
+      RUST_VERSION: "1.26.0"
+    docker:
+      - image: rust:1.26.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-cargo-{{ .Environment.RUST_VERSION }}-{{ .Revision }}
+            - v1-cargo-{{ .Environment.RUST_VERSION }}
+            - v1-cargo
+      - run: cargo update
+      - restore_cache:
+          keys:
+            - v1-build-{{ .Environment.RUST_VERSION }}-{{ checksum "Cargo.lock" }}-{{ .Revision }}
+            - v1-build-{{ .Environment.RUST_VERSION }}-{{ checksum "Cargo.lock" }}
+            - v1-build-{{ .Environment.RUST_VERSION }}
+            - v1-build
+      - run: cargo test
+
+  tarpaulin:
+    environment:
+      RUST_VERSION: "1.26.0"
+    docker:
+      - image: rust:1.26.0
+    steps:
+      - restore_cache:
+          keys:
+            - v1-cargo-{{ .Environment.RUST_VERSION }}
+            - v1-cargo
+      - restore_cache:
+          keys:
+            - v1-tarpaulin-{{ .Environment.RUST_VERSION }}
+            - v1-tarpaulin
+      - run:
+          name: install tarpaulin
+          command: |
+            if [[ ! -e /usr/local/cargo/bin/cargo-tarpaulin ]]; then
+                apt-get update -y;
+                apt-get install -y libssl-dev cmake;
+                cargo install cargo-tarpaulin;
+            fi
+      - save_cache:
+          key: v1-tarpaulin-{{ .Environment.RUST_VERSION }}
+          paths:
+            - /usr/local/cargo/bin/cargo-tarpaulin
+
+  coverage:
+    environment:
+      RUST_VERSION: "1.26.0"
+    docker:
+      - image: rust:1.26.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-tarpaulin-{{ .Environment.RUST_VERSION }}
+            - v1-build
+      - run:
+          name: install dependencies
+          command: |
+            apt-get update -y;
+            apt-get install -y libssl-dev;
+      - restore_cache:
+          keys:
+            - v1-cargo-{{ .Environment.RUST_VERSION }}-{{ .Revision }}
+            - v1-cargo-{{ .Environment.RUST_VERSION }}
+            - v1-cargo
+      - run: cargo update
+      - restore_cache:
+          keys:
+            - v1-build-{{ .Environment.RUST_VERSION }}-{{ checksum "Cargo.lock" }}-{{ .Revision }}
+            - v1-build-{{ .Environment.RUST_VERSION }}-{{ checksum "Cargo.lock" }}
+            - v1-build-{{ .Environment.RUST_VERSION }}
+            - v1-build
+      - run:
+          name: code coverage
+          command: |
+            cargo tarpaulin --no-count --skip-clean --out Xml &&
+            bash <(curl -s https://codecov.io/bash)
+
+workflows:
+  version: 2
+  flows:
+    jobs:
+      - refresh_cache
+      - tarpaulin:
+          requires:
+            - refresh_cache
+      - build:
+          requires:
+            - refresh_cache
+      - test:
+          requires:
+            - build
+      - coverage:
+          requires:
+            - build
+            - tarpaulin
