@@ -117,8 +117,7 @@ jobs:
       - run:
           name: code coverage
           command: |
-            cargo tarpaulin --no-count --skip-clean --out Xml &&
-            bash <(curl -s https://codecov.io/bash)
+            cargo tarpaulin --ciserver circle-ci --coveralls $CIRCLE_PULL_REQUEST
 
 workflows:
   version: 2
